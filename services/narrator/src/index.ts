@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import OpenAI from 'openai';
 import type {
   ExperienceDiff,
   FlowComparison,
@@ -13,6 +14,8 @@ import { NARRATION_SYSTEM_PROMPT } from './prompt.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, '../../..');
+const DEFAULT_NARRATION_MODEL = 'gpt-4o';
+const NARRATION_TIME_TOLERANCE_SEC = 5;
 
 interface Args {
   input: string; // pipeline-output.json
@@ -35,17 +38,8 @@ function parseArgs(): Args {
   };
 }
 
-/**
- * LLM narration. TODO(BE-2): call OpenAI (gpt-4o) with NARRATION_SYSTEM_PROMPT,
- * passing ONLY changes + evidence + flow metadata, then validate that every
- * returned segment has non-empty evidenceIds that exist in the evidence list.
- *
- * Until wired, falls back to deterministic template narration so the whole
- * chain runs end-to-end without an API key.
- */
-export async function generateNarration(flow: FlowComparison): Promise<NarrationSegment[]> {
-  void NARRATION_SYSTEM_PROMPT;
-  return flow.perceivableChanges.map((change, i) => ({
+function deterministicNarration(flow: FlowComparison): NarrationSegment[] {
+  return flow.perceivableChanges.map((change) => ({
     id: `narr-${change.id}`,
     startSec: Math.max(0, change.timestampSec - 2),
     endSec: change.timestampSec + 5,
@@ -56,17 +50,179 @@ export async function generateNarration(flow: FlowComparison): Promise<Narration
   }));
 }
 
+function isLlmDisabled(): boolean {
+  return ['1', 'true', 'yes'].includes((process.env.NARRATOR_DISABLE_LLM ?? '').toLowerCase());
+}
+
+function assertStringArray(value: unknown, field: string, segmentId: string): asserts value is string[] {
+  if (!Array.isArray(value) || !value.every((item) => typeof item === 'string')) {
+    throw new Error(`Narration segment '${segmentId}' has invalid ${field}.`);
+  }
+}
+
+function assertNarrationSegments(value: unknown): asserts value is NarrationSegment[] {
+  if (!Array.isArray(value)) {
+    throw new Error('LLM narration response must be a JSON array.');
+  }
+
+  for (const [i, segment] of value.entries()) {
+    if (segment === null || typeof segment !== 'object') {
+      throw new Error(`Narration segment at index ${i} must be an object.`);
+    }
+
+    const candidate = segment as Record<string, unknown>;
+    const segmentId = typeof candidate.id === 'string' ? candidate.id : `index ${i}`;
+
+    if (typeof candidate.id !== 'string') {
+      throw new Error(`Narration segment at index ${i} has invalid id.`);
+    }
+    if (typeof candidate.startSec !== 'number') {
+      throw new Error(`Narration segment '${segmentId}' has invalid startSec.`);
+    }
+    if (candidate.endSec !== undefined && typeof candidate.endSec !== 'number') {
+      throw new Error(`Narration segment '${segmentId}' has invalid endSec.`);
+    }
+    if (typeof candidate.text !== 'string') {
+      throw new Error(`Narration segment '${segmentId}' has invalid text.`);
+    }
+    if (
+      candidate.severity !== 'improvement' &&
+      candidate.severity !== 'regression' &&
+      candidate.severity !== 'neutral'
+    ) {
+      throw new Error(`Narration segment '${segmentId}' has invalid severity.`);
+    }
+
+    assertStringArray(candidate.changeIds, 'changeIds', segmentId);
+    assertStringArray(candidate.evidenceIds, 'evidenceIds', segmentId);
+  }
+}
+
+function parseNarrationResponse(content: string): NarrationSegment[] {
+  const parsed = JSON.parse(content) as unknown;
+  assertNarrationSegments(parsed);
+  return parsed;
+}
+
+function buildNarrationPayload(flow: FlowComparison) {
+  return {
+    flowId: flow.flowId,
+    flowTitle: flow.flowTitle,
+    viewport: flow.viewport,
+    durationSec: flow.durationSec,
+    perceivableChanges: flow.perceivableChanges,
+    evidence: flow.evidence,
+  };
+}
+
+async function generateLlmNarration(flow: FlowComparison, apiKey: string): Promise<NarrationSegment[]> {
+  const client = new OpenAI({ apiKey });
+  const response = await client.chat.completions.create({
+    model: process.env.OPENAI_NARRATION_MODEL ?? DEFAULT_NARRATION_MODEL,
+    messages: [
+      { role: 'system', content: NARRATION_SYSTEM_PROMPT },
+      { role: 'user', content: JSON.stringify(buildNarrationPayload(flow)) },
+    ],
+    response_format: {
+      type: 'json_schema',
+      json_schema: {
+        name: 'narration_segments',
+        strict: true,
+        schema: {
+          type: 'array',
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              id: { type: 'string' },
+              startSec: { type: 'number' },
+              endSec: { type: 'number' },
+              text: { type: 'string' },
+              severity: { type: 'string', enum: ['improvement', 'regression', 'neutral'] },
+              changeIds: {
+                type: 'array',
+                items: { type: 'string' },
+              },
+              evidenceIds: {
+                type: 'array',
+                items: { type: 'string' },
+              },
+            },
+            required: ['id', 'startSec', 'endSec', 'text', 'severity', 'changeIds', 'evidenceIds'],
+          },
+        },
+      },
+    },
+  });
+
+  const content = response.choices[0]?.message.content;
+  if (!content) {
+    throw new Error('LLM narration response was empty.');
+  }
+
+  const segments = parseNarrationResponse(content);
+  assertEvidenceBacked(segments, flow);
+  return segments;
+}
+
+/**
+ * Generate narration through OpenAI when configured, with deterministic fallback
+ * for local/offline runs and any model or validation failure.
+ */
+export async function generateNarration(flow: FlowComparison): Promise<NarrationSegment[]> {
+  const fallback = (): NarrationSegment[] => {
+    const segments = deterministicNarration(flow);
+    assertEvidenceBacked(segments, flow);
+    return segments;
+  };
+
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey || isLlmDisabled()) {
+    return fallback();
+  }
+
+  try {
+    return await generateLlmNarration(flow, apiKey);
+  } catch (err) {
+    console.warn('[narrator] LLM narration failed, using deterministic fallback', err);
+    return fallback();
+  }
+}
+
 /** Validate the iron rule: every narration sentence must be evidence-backed. */
 export function assertEvidenceBacked(segments: NarrationSegment[], flow: FlowComparison): void {
-  const known = new Set(flow.evidence.map((e) => e.id));
+  const knownEvidence = new Set(flow.evidence.map((e) => e.id));
+  const knownChanges = new Set(flow.perceivableChanges.map((change) => change.id));
+  const maxEndSec = flow.durationSec + NARRATION_TIME_TOLERANCE_SEC;
+
   for (const seg of segments) {
-    if (seg.evidenceIds.length === 0) {
+    if (!Array.isArray(seg.evidenceIds) || seg.evidenceIds.length === 0) {
       throw new Error(`Narration segment '${seg.id}' has no evidenceIds — not allowed.`);
     }
     for (const id of seg.evidenceIds) {
-      if (!known.has(id)) {
+      if (!knownEvidence.has(id)) {
         throw new Error(`Narration segment '${seg.id}' references unknown evidence '${id}'.`);
       }
+    }
+    if (!Array.isArray(seg.changeIds)) {
+      throw new Error(`Narration segment '${seg.id}' has invalid changeIds.`);
+    }
+    for (const id of seg.changeIds) {
+      if (!knownChanges.has(id)) {
+        throw new Error(`Narration segment '${seg.id}' references unknown change '${id}'.`);
+      }
+    }
+    if (!Number.isFinite(seg.startSec) || seg.startSec < 0) {
+      throw new Error(`Narration segment '${seg.id}' starts before 0s.`);
+    }
+    if (seg.endSec !== undefined && (!Number.isFinite(seg.endSec) || seg.endSec <= seg.startSec)) {
+      throw new Error(`Narration segment '${seg.id}' ends before it starts.`);
+    }
+    if (seg.startSec > maxEndSec) {
+      throw new Error(`Narration segment '${seg.id}' starts after the flow duration tolerance.`);
+    }
+    if (seg.endSec !== undefined && seg.endSec > maxEndSec) {
+      throw new Error(`Narration segment '${seg.id}' ends after the flow duration tolerance.`);
     }
   }
 }
