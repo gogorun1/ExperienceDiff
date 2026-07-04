@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "build": "tsc --build",
-    "start": "tsc --build && node dist/index.js"
+    "start": "tsc --build && node dist/index.js",
+    "test": "tsc --build && node dist/verify.js"
   },
   "dependencies": {
     "@experience-diff/contract": "*",

@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { join, resolve, dirname } from 'node:path';
+import { mkdirSync, readFileSync, writeFileSync, existsSync, statSync } from 'node:fs';
+import { join, resolve, dirname, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import OpenAI from 'openai';
 import type {
@@ -17,7 +17,10 @@ const REPO_ROOT = resolve(HERE, '../../..');
 const DEFAULT_NARRATION_MODEL = 'gpt-4o';
 const DEFAULT_TTS_MODEL = 'tts-1';
 const DEFAULT_TTS_VOICE = 'nova';
-const NARRATION_TIME_TOLERANCE_SEC = 5;
+const NARRATION_TIME_TOLERANCE_SEC = 2;
+const OPENAI_TIMEOUT_MS = 30_000;
+const FFMPEG = process.env.FFMPEG_PATH ?? 'ffmpeg';
+const FFPROBE = process.env.FFPROBE_PATH ?? 'ffprobe';
 
 interface Args {
   input: string; // pipeline-output.json
@@ -25,10 +28,10 @@ interface Args {
   prTitle: string;
 }
 
-function parseArgs(): Args {
+export function parseArgs(argv = process.argv): Args {
   const get = (flag: string, def?: string): string => {
-    const i = process.argv.indexOf(flag);
-    if (i !== -1 && process.argv[i + 1]) return process.argv[i + 1];
+    const i = argv.indexOf(flag);
+    if (i !== -1 && argv[i + 1]) return argv[i + 1];
     if (def !== undefined) return def;
     console.error(`Missing required arg ${flag}`);
     process.exit(1);
@@ -110,6 +113,32 @@ function parseNarrationResponse(content: string): NarrationSegment[] {
   return parsed;
 }
 
+function assertPipelineRunOutput(value: unknown): asserts value is PipelineRunOutput {
+  if (value === null || typeof value !== 'object') {
+    throw new Error('invalid pipeline output: expected an object.');
+  }
+
+  const candidate = value as Record<string, unknown>;
+  for (const field of ['baseRef', 'headRef', 'flowId', 'videoBefore', 'videoAfter'] as const) {
+    if (typeof candidate[field] !== 'string') {
+      throw new Error(`invalid pipeline output: missing or invalid ${field}.`);
+    }
+  }
+
+  if (candidate.viewport !== 'desktop' && candidate.viewport !== 'mobile') {
+    throw new Error('invalid pipeline output: missing or invalid viewport.');
+  }
+  if (typeof candidate.durationSec !== 'number' || !Number.isFinite(candidate.durationSec) || candidate.durationSec <= 0) {
+    throw new Error('invalid pipeline output: missing or invalid durationSec.');
+  }
+  if (!Array.isArray(candidate.evidence)) {
+    throw new Error('invalid pipeline output: missing or invalid evidence.');
+  }
+  if (candidate.mode !== 'recorded' && candidate.mode !== 'fallback') {
+    throw new Error('invalid pipeline output: missing or invalid mode.');
+  }
+}
+
 function buildNarrationPayload(flow: FlowComparison) {
   return {
     flowId: flow.flowId,
@@ -122,7 +151,7 @@ function buildNarrationPayload(flow: FlowComparison) {
 }
 
 async function generateLlmNarration(flow: FlowComparison, apiKey: string): Promise<NarrationSegment[]> {
-  const client = new OpenAI({ apiKey });
+  const client = new OpenAI({ apiKey, maxRetries: 2, timeout: OPENAI_TIMEOUT_MS });
   const response = await client.chat.completions.create({
     model: process.env.OPENAI_NARRATION_MODEL ?? DEFAULT_NARRATION_MODEL,
     messages: [
@@ -241,22 +270,41 @@ function escapeFfmpegConcatPath(path: string): string {
   return path.replace(/'/g, "'\\''");
 }
 
+function normalizeBrowserPath(path: string): string {
+  return path.split(sep).join('/');
+}
+
+function toAssetBaseUrl(outDir: string): string {
+  return normalizeBrowserPath(relative(REPO_ROOT, resolve(outDir))) || '.';
+}
+
+function toBrowserAssetRef(filePath: string, outDir: string): string {
+  if (/^https?:\/\//i.test(filePath)) return filePath;
+  return normalizeBrowserPath(relative(resolve(outDir), resolve(filePath)));
+}
+
+function assertNonEmptyFile(path: string, label: string): void {
+  if (!existsSync(path) || statSync(path).size <= 0) {
+    throw new Error(`${label} was not created or is empty: ${path}`);
+  }
+}
+
 function getMediaDurationSec(path: string): number {
   const output = execFileSync(
-    'ffprobe',
+    FFPROBE,
     ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', path],
     { encoding: 'utf8' },
   );
   const duration = Number.parseFloat(output.trim());
   if (!Number.isFinite(duration) || duration < 0) {
-    throw new Error(`Could not determine audio duration for ${path}`);
+    throw new Error(`Could not determine audio duration with ${FFPROBE} for ${path}`);
   }
   return duration;
 }
 
 function createSilenceMp3(path: string, durationSec: number): void {
   execFileSync(
-    'ffmpeg',
+    FFMPEG,
     [
       '-y',
       '-loglevel',
@@ -275,6 +323,7 @@ function createSilenceMp3(path: string, durationSec: number): void {
     ],
     { stdio: 'inherit' },
   );
+  assertNonEmptyFile(path, 'silence audio');
 }
 
 export async function synthesizeVoiceover(
@@ -294,12 +343,15 @@ export async function synthesizeVoiceover(
   }
 
   try {
-    const client = new OpenAI({ apiKey });
+    const client = new OpenAI({ apiKey, maxRetries: 2, timeout: OPENAI_TIMEOUT_MS });
     const voiceoverDir = join(outDir, 'voiceover');
     mkdirSync(voiceoverDir, { recursive: true });
 
     const concatParts: string[] = [];
     let cursorSec = 0;
+    const targetEndSec = Math.max(
+      ...orderedSegments.map((segment) => segment.endSec ?? segment.startSec),
+    );
 
     for (const [index, segment] of orderedSegments.entries()) {
       const startSec = Math.max(0, segment.startSec);
@@ -326,8 +378,16 @@ export async function synthesizeVoiceover(
         response_format: 'mp3',
       });
       writeFileSync(segmentPath, Buffer.from(await speech.arrayBuffer()));
+      assertNonEmptyFile(segmentPath, 'TTS segment audio');
       concatParts.push(segmentPath);
       cursorSec = Math.max(cursorSec, startSec) + getMediaDurationSec(segmentPath);
+    }
+
+    const trailingSilenceSec = targetEndSec - cursorSec;
+    if (trailingSilenceSec > 0.01) {
+      const silencePath = join(voiceoverDir, '999-trailing-silence.mp3');
+      createSilenceMp3(silencePath, trailingSilenceSec);
+      concatParts.push(silencePath);
     }
 
     const concatListPath = join(voiceoverDir, 'concat.txt');
@@ -338,10 +398,11 @@ export async function synthesizeVoiceover(
 
     const out = join(outDir, 'voiceover.mp3');
     execFileSync(
-      'ffmpeg',
+      FFMPEG,
       ['-y', '-loglevel', 'error', '-f', 'concat', '-safe', '0', '-i', concatListPath, '-c', 'copy', out],
       { stdio: 'inherit' },
     );
+    assertNonEmptyFile(out, 'voiceover audio');
     return out;
   } catch (err) {
     console.warn('[narrator] TTS synthesis failed, report will omit voiceover audio', err);
@@ -358,7 +419,7 @@ export function composeSideBySide(
   const out = join(outDir, 'side-by-side.mp4');
   try {
     execFileSync(
-      'ffmpeg',
+      FFMPEG,
       [
         '-y',
         '-loglevel',
@@ -377,9 +438,10 @@ export function composeSideBySide(
       ],
       { stdio: 'inherit' },
     );
+    assertNonEmptyFile(out, 'side-by-side video');
     return out;
   } catch (err) {
-    console.warn('[narrator] ffmpeg composition failed, report will use raw videos only', err);
+    console.warn(`[narrator] ${FFMPEG} composition failed, report will use raw videos only`, err);
     return null;
   }
 }
@@ -388,7 +450,7 @@ export function muxVoiceoverIntoVideo(videoPath: string, voiceoverPath: string, 
   const out = join(outDir, 'final-side-by-side.mp4');
   try {
     execFileSync(
-      'ffmpeg',
+      FFMPEG,
       [
         '-y',
         '-loglevel',
@@ -406,21 +468,24 @@ export function muxVoiceoverIntoVideo(videoPath: string, voiceoverPath: string, 
       ],
       { stdio: 'inherit' },
     );
+    assertNonEmptyFile(out, 'muxed side-by-side video');
     return out;
   } catch (err) {
-    console.warn('[narrator] ffmpeg audio mux failed, keeping silent side-by-side video', err);
+    console.warn(`[narrator] ${FFMPEG} audio mux failed, keeping silent side-by-side video`, err);
     return null;
   }
 }
 
-async function main(): Promise<void> {
-  const args = parseArgs();
+export async function main(argv = process.argv): Promise<void> {
+  const args = parseArgs(argv);
   if (!existsSync(args.input)) {
     console.error(`[narrator] input not found: ${args.input}`);
     console.error('[narrator] run the pipeline first (or with --fallback)');
     process.exit(1);
   }
-  const run = JSON.parse(readFileSync(args.input, 'utf8')) as PipelineRunOutput;
+  const parsedRun = JSON.parse(readFileSync(args.input, 'utf8')) as unknown;
+  assertPipelineRunOutput(parsedRun);
+  const run = parsedRun;
   mkdirSync(args.out, { recursive: true });
 
   const changes = deriveChanges(run.evidence);
@@ -429,8 +494,8 @@ async function main(): Promise<void> {
     flowId: run.flowId,
     flowTitle: run.flowId === 'checkout-fail' ? 'Checkout payment failure branch' : 'Checkout happy path',
     viewport: run.viewport,
-    videoBefore: run.videoBefore,
-    videoAfter: run.videoAfter,
+    videoBefore: toBrowserAssetRef(run.videoBefore, args.out),
+    videoAfter: toBrowserAssetRef(run.videoAfter, args.out),
     durationSec: run.durationSec,
     narration: [],
     perceivableChanges: changes,
@@ -440,11 +505,13 @@ async function main(): Promise<void> {
   flow.narration = await generateNarration(flow);
   assertEvidenceBacked(flow.narration, flow);
 
-  flow.sideBySideVideo = composeSideBySide(run.videoBefore, run.videoAfter, args.out) ?? undefined;
-  flow.voiceoverAudio = (await synthesizeVoiceover(flow.narration, args.out)) ?? undefined;
-  if (flow.sideBySideVideo && flow.voiceoverAudio) {
-    flow.sideBySideVideo =
-      muxVoiceoverIntoVideo(flow.sideBySideVideo, flow.voiceoverAudio, args.out) ?? flow.sideBySideVideo;
+  const sideBySideVideo = composeSideBySide(run.videoBefore, run.videoAfter, args.out);
+  const voiceoverAudio = await synthesizeVoiceover(flow.narration, args.out);
+  flow.sideBySideVideo = sideBySideVideo ? toBrowserAssetRef(sideBySideVideo, args.out) : undefined;
+  flow.voiceoverAudio = voiceoverAudio ? toBrowserAssetRef(voiceoverAudio, args.out) : undefined;
+  if (sideBySideVideo && voiceoverAudio) {
+    const muxedVideo = muxVoiceoverIntoVideo(sideBySideVideo, voiceoverAudio, args.out);
+    flow.sideBySideVideo = muxedVideo ? toBrowserAssetRef(muxedVideo, args.out) : flow.sideBySideVideo;
   }
 
   const regressions = changes.filter((c) => c.severity === 'regression');
@@ -469,6 +536,7 @@ async function main(): Promise<void> {
     },
     status: run.mode === 'fallback' ? 'fallback' : 'generated',
     createdAt: new Date().toISOString(),
+    assetBaseUrl: toAssetBaseUrl(args.out),
     summary,
     flows: [flow],
   };
