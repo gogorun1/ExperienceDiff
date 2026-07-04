@@ -15,6 +15,8 @@ import { NARRATION_SYSTEM_PROMPT } from './prompt.js';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, '../../..');
 const DEFAULT_NARRATION_MODEL = 'gpt-4o';
+const DEFAULT_TTS_MODEL = 'tts-1';
+const DEFAULT_TTS_VOICE = 'nova';
 const NARRATION_TIME_TOLERANCE_SEC = 5;
 
 interface Args {
@@ -52,6 +54,10 @@ function deterministicNarration(flow: FlowComparison): NarrationSegment[] {
 
 function isLlmDisabled(): boolean {
   return ['1', 'true', 'yes'].includes((process.env.NARRATOR_DISABLE_LLM ?? '').toLowerCase());
+}
+
+function isTtsDisabled(): boolean {
+  return ['1', 'true', 'yes'].includes((process.env.NARRATOR_DISABLE_TTS ?? '').toLowerCase());
 }
 
 function assertStringArray(value: unknown, field: string, segmentId: string): asserts value is string[] {
@@ -227,15 +233,120 @@ export function assertEvidenceBacked(segments: NarrationSegment[], flow: FlowCom
   }
 }
 
-/**
- * TTS. TODO(BE-2): OpenAI tts-1 per segment, concat with silences so audio
- * aligns to startSec. Returns null until wired (viewer tolerates it).
- */
+function sanitizeFilename(value: string): string {
+  return value.replace(/[^a-z0-9_-]+/gi, '-').replace(/^-+|-+$/g, '') || 'segment';
+}
+
+function escapeFfmpegConcatPath(path: string): string {
+  return path.replace(/'/g, "'\\''");
+}
+
+function getMediaDurationSec(path: string): number {
+  const output = execFileSync(
+    'ffprobe',
+    ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', path],
+    { encoding: 'utf8' },
+  );
+  const duration = Number.parseFloat(output.trim());
+  if (!Number.isFinite(duration) || duration < 0) {
+    throw new Error(`Could not determine audio duration for ${path}`);
+  }
+  return duration;
+}
+
+function createSilenceMp3(path: string, durationSec: number): void {
+  execFileSync(
+    'ffmpeg',
+    [
+      '-y',
+      '-loglevel',
+      'error',
+      '-f',
+      'lavfi',
+      '-i',
+      'anullsrc=r=44100:cl=mono',
+      '-t',
+      durationSec.toFixed(3),
+      '-q:a',
+      '9',
+      '-acodec',
+      'libmp3lame',
+      path,
+    ],
+    { stdio: 'inherit' },
+  );
+}
+
 export async function synthesizeVoiceover(
-  _segments: NarrationSegment[],
-  _outDir: string,
+  segments: NarrationSegment[],
+  outDir: string,
 ): Promise<string | null> {
-  return null;
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey || isTtsDisabled()) {
+    return null;
+  }
+
+  const orderedSegments = [...segments]
+    .filter((segment) => segment.text.trim().length > 0)
+    .sort((a, b) => a.startSec - b.startSec);
+  if (orderedSegments.length === 0) {
+    return null;
+  }
+
+  try {
+    const client = new OpenAI({ apiKey });
+    const voiceoverDir = join(outDir, 'voiceover');
+    mkdirSync(voiceoverDir, { recursive: true });
+
+    const concatParts: string[] = [];
+    let cursorSec = 0;
+
+    for (const [index, segment] of orderedSegments.entries()) {
+      const startSec = Math.max(0, segment.startSec);
+      const gapSec = startSec - cursorSec;
+      if (gapSec > 0.01) {
+        const silencePath = join(voiceoverDir, `${String(index).padStart(3, '0')}-silence.mp3`);
+        createSilenceMp3(silencePath, gapSec);
+        concatParts.push(silencePath);
+        cursorSec = startSec;
+      } else if (gapSec < -0.01) {
+        console.warn(
+          `[narrator] narration segment '${segment.id}' overlaps prior audio; it will start after the previous segment`,
+        );
+      }
+
+      const segmentPath = join(
+        voiceoverDir,
+        `${String(index).padStart(3, '0')}-${sanitizeFilename(segment.id)}.mp3`,
+      );
+      const speech = await client.audio.speech.create({
+        model: process.env.OPENAI_TTS_MODEL ?? DEFAULT_TTS_MODEL,
+        voice: process.env.OPENAI_TTS_VOICE ?? DEFAULT_TTS_VOICE,
+        input: segment.text,
+        response_format: 'mp3',
+      });
+      writeFileSync(segmentPath, Buffer.from(await speech.arrayBuffer()));
+      concatParts.push(segmentPath);
+      cursorSec = Math.max(cursorSec, startSec) + getMediaDurationSec(segmentPath);
+    }
+
+    const concatListPath = join(voiceoverDir, 'concat.txt');
+    writeFileSync(
+      concatListPath,
+      concatParts.map((part) => `file '${escapeFfmpegConcatPath(part)}'`).join('\n'),
+    );
+
+    const out = join(outDir, 'voiceover.mp3');
+    execFileSync(
+      'ffmpeg',
+      ['-y', '-loglevel', 'error', '-f', 'concat', '-safe', '0', '-i', concatListPath, '-c', 'copy', out],
+      { stdio: 'inherit' },
+    );
+    return out;
+  } catch (err) {
+    console.warn('[narrator] TTS synthesis failed, report will omit voiceover audio', err);
+    return null;
+  }
 }
 
 /** ffmpeg side-by-side composition of the two raw videos. */
@@ -273,6 +384,35 @@ export function composeSideBySide(
   }
 }
 
+export function muxVoiceoverIntoVideo(videoPath: string, voiceoverPath: string, outDir: string): string | null {
+  const out = join(outDir, 'final-side-by-side.mp4');
+  try {
+    execFileSync(
+      'ffmpeg',
+      [
+        '-y',
+        '-loglevel',
+        'error',
+        '-i',
+        videoPath,
+        '-i',
+        voiceoverPath,
+        '-c:v',
+        'copy',
+        '-c:a',
+        'aac',
+        '-shortest',
+        out,
+      ],
+      { stdio: 'inherit' },
+    );
+    return out;
+  } catch (err) {
+    console.warn('[narrator] ffmpeg audio mux failed, keeping silent side-by-side video', err);
+    return null;
+  }
+}
+
 async function main(): Promise<void> {
   const args = parseArgs();
   if (!existsSync(args.input)) {
@@ -302,6 +442,10 @@ async function main(): Promise<void> {
 
   flow.sideBySideVideo = composeSideBySide(run.videoBefore, run.videoAfter, args.out) ?? undefined;
   flow.voiceoverAudio = (await synthesizeVoiceover(flow.narration, args.out)) ?? undefined;
+  if (flow.sideBySideVideo && flow.voiceoverAudio) {
+    flow.sideBySideVideo =
+      muxVoiceoverIntoVideo(flow.sideBySideVideo, flow.voiceoverAudio, args.out) ?? flow.sideBySideVideo;
+  }
 
   const regressions = changes.filter((c) => c.severity === 'regression');
   const improvements = changes.filter((c) => c.severity === 'improvement');
