@@ -43,7 +43,7 @@ function parseArgs(): Args {
  * Until wired, falls back to deterministic template narration so the whole
  * chain runs end-to-end without an API key.
  */
-async function generateNarration(flow: FlowComparison): Promise<NarrationSegment[]> {
+export async function generateNarration(flow: FlowComparison): Promise<NarrationSegment[]> {
   void NARRATION_SYSTEM_PROMPT;
   return flow.perceivableChanges.map((change, i) => ({
     id: `narr-${change.id}`,
@@ -57,7 +57,7 @@ async function generateNarration(flow: FlowComparison): Promise<NarrationSegment
 }
 
 /** Validate the iron rule: every narration sentence must be evidence-backed. */
-function assertEvidenceBacked(segments: NarrationSegment[], flow: FlowComparison): void {
+export function assertEvidenceBacked(segments: NarrationSegment[], flow: FlowComparison): void {
   const known = new Set(flow.evidence.map((e) => e.id));
   for (const seg of segments) {
     if (seg.evidenceIds.length === 0) {
@@ -75,12 +75,19 @@ function assertEvidenceBacked(segments: NarrationSegment[], flow: FlowComparison
  * TTS. TODO(BE-2): OpenAI tts-1 per segment, concat with silences so audio
  * aligns to startSec. Returns null until wired (viewer tolerates it).
  */
-async function synthesizeVoiceover(_segments: NarrationSegment[], _outDir: string): Promise<string | null> {
+export async function synthesizeVoiceover(
+  _segments: NarrationSegment[],
+  _outDir: string,
+): Promise<string | null> {
   return null;
 }
 
 /** ffmpeg side-by-side composition of the two raw videos. */
-function composeSideBySide(videoBefore: string, videoAfter: string, outDir: string): string | null {
+export function composeSideBySide(
+  videoBefore: string,
+  videoAfter: string,
+  outDir: string,
+): string | null {
   const out = join(outDir, 'side-by-side.mp4');
   try {
     execFileSync(
@@ -171,7 +178,9 @@ async function main(): Promise<void> {
   console.log(`[narrator] wrote ${outPath}`);
 }
 
-main().catch((err) => {
-  console.error('[narrator] failed:', err);
-  process.exit(1);
-});
+if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '/'))) {
+  main().catch((err) => {
+    console.error('[narrator] failed:', err);
+    process.exit(1);
+  });
+}
