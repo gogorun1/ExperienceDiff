@@ -22,7 +22,7 @@ npm run voice                 # Audio：follow-up 服务（4100 端口）
 
 | 角色 | 目录 | 产出 | 详细 DoD |
 | --- | --- | --- | --- |
-| FE-1 Demo 语料 | `apps/demo-shop/`（种子在 `templates/demo-shop-seed/`） | 假电商 app + `main`/`pr-a`/`pr-b`/`pr-c` 分支 | `templates/demo-shop-seed/README.md` |
+| FE-1 Demo 语料 | `apps/demo-shop/`（独立 repo：[Cursor_user_journey_demo](https://github.com/gogorun1/Cursor_user_journey_demo)） | 假电商 app + `main`/`pr-a`/`pr-b`/`pr-c` 分支 | `templates/demo-shop-seed/README.md` |
 | FE-2 Viewer | `apps/viewer/` | 影院感 report viewer（并排视频/字幕/timeline/severity/追问入口） | `apps/viewer/README.md` |
 | BE-1 Pipeline | `services/pipeline/` + `packages/contract/`（合约 owner） | 双 ref 双端口 Playwright 双跑 → raw videos + evidence JSON | `services/pipeline/README.md` |
 | BE-2 Narration / Video | `services/narrator/` | evidence → changes → narration → TTS → ffmpeg 并排 → `experience-diff.json` | `services/narrator/README.md` |
@@ -47,7 +47,7 @@ voice ──FollowUpResponse──→   viewer（消费 report JSON，append 追
 
 - `main` 受保护，小步 PR 合入
 - 分支前缀：`fe1/*`、`fe2/*`、`be1/*`、`be2/*`、`audio/*`
-- `apps/demo-shop/` 是嵌套独立 repo（主仓 gitignore），FE-1 在里面用真实分支做 PR-A/B/C
+- `apps/demo-shop/` 是独立 repo [Cursor_user_journey_demo](https://github.com/gogorun1/Cursor_user_journey_demo)（主仓 gitignore，`npm run bootstrap:demo-shop` 一键 clone），FE-1 在里面用真实分支做 PR-A/B/C 并 push
 - `assets/fallback/` 里的兜底产物必须提交（铁律 2），`assets/generated/` gitignore
 
 ## 里程碑
