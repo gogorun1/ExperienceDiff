@@ -1,0 +1,19 @@
+{
+  "name": "@experience-diff/voice",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "tsc --build",
+    "start": "tsc --build && node dist/server.js",
+    "test:intents": "tsc --build && node dist/intents.test.js"
+  },
+  "dependencies": {
+    "@experience-diff/contract": "*",
+    "openai": "^4.77.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  }
+}

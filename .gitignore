@@ -1,0 +1,26 @@
+# dependencies
+node_modules/
+
+# build output
+dist/
+*.tsbuildinfo
+
+# demo-shop is a nested independent git repo (bootstrap via scripts/bootstrap-demo-shop.sh)
+apps/demo-shop/
+
+# pipeline runtime artifacts
+services/pipeline/.worktrees/
+services/pipeline/test-results/
+services/pipeline/playwright-report/
+
+# generated assets: large raw/intermediate files are ignored,
+# but committed fallback assets live in assets/fallback/ (Iron Rule 2)
+assets/generated/
+
+# env / secrets
+.env
+.env.*
+!.env.example
+
+# OS
+.DS_Store

@@ -1,0 +1,25 @@
+{
+  "name": "experience-diff",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Experience Diff — every PR gets a narrated, evidence-backed, queryable product demo.",
+  "workspaces": [
+    "packages/*",
+    "apps/viewer",
+    "services/*"
+  ],
+  "scripts": {
+    "bootstrap:demo-shop": "bash scripts/bootstrap-demo-shop.sh",
+    "dev:viewer": "npm run dev --workspace apps/viewer",
+    "pipeline": "npm run start --workspace services/pipeline",
+    "narrate": "npm run start --workspace services/narrator",
+    "voice": "npm run start --workspace services/voice",
+    "typecheck": "tsc --build"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

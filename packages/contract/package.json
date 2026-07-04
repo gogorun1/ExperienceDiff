@@ -1,0 +1,22 @@
+{
+  "name": "@experience-diff/contract",
+  "version": "0.1.0",
+  "description": "FROZEN interface contract (P0-0). All five workstreams depend only on this package.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./mock/*": "./mock/*"
+  },
+  "files": [
+    "dist",
+    "mock"
+  ],
+  "scripts": {
+    "build": "tsc --build"
+  }
+}

@@ -1,0 +1,68 @@
+{
+  "prMetadata": {
+    "title": "PR-B: Rename Continue button to Next step",
+    "author": "fe-1",
+    "branch": "pr-b",
+    "baseRef": "main",
+    "headRef": "pr-b",
+    "prNumber": 2
+  },
+  "status": "mock",
+  "createdAt": "2026-07-04T12:30:00.000Z",
+  "assetBaseUrl": "/assets/mock",
+  "summary": "Cosmetic change only. No meaningful user-flow change detected.",
+  "flows": [
+    {
+      "flowId": "checkout-happy",
+      "flowTitle": "Checkout happy path",
+      "viewport": "desktop",
+      "videoBefore": "placeholder-before.mp4",
+      "videoAfter": "placeholder-after.mp4",
+      "sideBySideVideo": "placeholder-side-by-side.mp4",
+      "voiceoverAudio": null,
+      "durationSec": 30,
+      "narration": [
+        {
+          "id": "prb-narr-cosmetic",
+          "startSec": 0,
+          "endSec": 6,
+          "text": "Cosmetic change only. The Continue button is now labeled Next step. No meaningful user-flow change detected.",
+          "severity": "neutral",
+          "changeIds": ["prb-change-copy"],
+          "evidenceIds": ["prb-before-button-text", "prb-after-button-text"]
+        }
+      ],
+      "perceivableChanges": [
+        {
+          "id": "prb-change-copy",
+          "type": "visual",
+          "description": "Button copy changed from 'Continue' to 'Next step'. Flow, timing and feedback are unchanged.",
+          "timestampSec": 7,
+          "severity": "neutral",
+          "evidenceIds": ["prb-before-button-text", "prb-after-button-text"],
+          "confidence": 0.98
+        }
+      ],
+      "evidence": [
+        {
+          "id": "prb-before-button-text",
+          "run": "before",
+          "timestampSec": 7.2,
+          "kind": "text",
+          "selector": "[data-testid='continue-button']",
+          "label": "Button text is 'Continue'",
+          "value": "Continue"
+        },
+        {
+          "id": "prb-after-button-text",
+          "run": "after",
+          "timestampSec": 7.1,
+          "kind": "text",
+          "selector": "[data-testid='continue-button']",
+          "label": "Button text is 'Next step'",
+          "value": "Next step"
+        }
+      ]
+    }
+  ]
+}

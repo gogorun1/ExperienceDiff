@@ -1,0 +1,229 @@
+{
+  "prMetadata": {
+    "title": "PR-A: Unify checkout into a single step",
+    "author": "fe-1",
+    "branch": "pr-a",
+    "baseRef": "main",
+    "headRef": "pr-a",
+    "prNumber": 1
+  },
+  "status": "mock",
+  "createdAt": "2026-07-04T12:30:00.000Z",
+  "assetBaseUrl": "/assets/mock",
+  "summary": "Checkout is now shorter, but payment loading feedback was lost.",
+  "flows": [
+    {
+      "flowId": "checkout-happy",
+      "flowTitle": "Checkout happy path",
+      "viewport": "desktop",
+      "videoBefore": "placeholder-before.mp4",
+      "videoAfter": "placeholder-after.mp4",
+      "sideBySideVideo": "placeholder-side-by-side.mp4",
+      "voiceoverAudio": null,
+      "durationSec": 30,
+      "narration": [
+        {
+          "id": "narr-intro",
+          "startSec": 0,
+          "endSec": 5,
+          "text": "This is the checkout flow, before on the left and after on the right.",
+          "severity": "neutral",
+          "changeIds": [],
+          "evidenceIds": ["before-nav-cart", "after-nav-cart"]
+        },
+        {
+          "id": "narr-step-removed",
+          "startSec": 5,
+          "endSec": 13,
+          "text": "The new checkout removes one step from the flow. The user goes from cart to payment in fewer steps.",
+          "severity": "improvement",
+          "changeIds": ["change-step-removed"],
+          "evidenceIds": [
+            "before-nav-shipping",
+            "before-nav-payment",
+            "before-nav-review",
+            "after-nav-checkout"
+          ]
+        },
+        {
+          "id": "narr-feedback-lost",
+          "startSec": 13,
+          "endSec": 22,
+          "text": "But after clicking Pay now, the new version waits without visible loading feedback. The user receives no confirmation that payment is processing.",
+          "severity": "regression",
+          "changeIds": ["change-feedback-lost"],
+          "evidenceIds": [
+            "before-spinner-visible",
+            "before-button-disabled",
+            "after-no-spinner-during-wait",
+            "after-button-not-disabled"
+          ]
+        },
+        {
+          "id": "narr-outro",
+          "startSec": 22,
+          "endSec": 28,
+          "text": "Both versions reach the order success page.",
+          "severity": "neutral",
+          "changeIds": [],
+          "evidenceIds": ["before-nav-success", "after-nav-success"]
+        }
+      ],
+      "perceivableChanges": [
+        {
+          "id": "change-step-removed",
+          "type": "step-removed",
+          "description": "Checkout is shorter: shipping, payment and review are unified into a single checkout step.",
+          "timestampSec": 8,
+          "severity": "improvement",
+          "evidenceIds": [
+            "before-nav-shipping",
+            "before-nav-payment",
+            "before-nav-review",
+            "after-nav-checkout"
+          ],
+          "confidence": 0.95
+        },
+        {
+          "id": "change-feedback-lost",
+          "type": "feedback-lost",
+          "description": "After clicking Pay now, the new version waits about 1.2 seconds with no spinner and the button stays enabled.",
+          "timestampSec": 14,
+          "severity": "regression",
+          "evidenceIds": [
+            "before-spinner-visible",
+            "before-button-disabled",
+            "after-no-spinner-during-wait",
+            "after-button-not-disabled"
+          ],
+          "confidence": 0.92
+        }
+      ],
+      "evidence": [
+        {
+          "id": "before-nav-cart",
+          "run": "before",
+          "timestampSec": 2.1,
+          "kind": "navigation",
+          "label": "Navigated to /cart",
+          "value": "/cart"
+        },
+        {
+          "id": "before-nav-shipping",
+          "run": "before",
+          "timestampSec": 6.3,
+          "kind": "navigation",
+          "label": "Navigated to /checkout/shipping",
+          "value": "/checkout/shipping"
+        },
+        {
+          "id": "before-nav-payment",
+          "run": "before",
+          "timestampSec": 10.8,
+          "kind": "navigation",
+          "label": "Navigated to /checkout/payment",
+          "value": "/checkout/payment"
+        },
+        {
+          "id": "before-nav-review",
+          "run": "before",
+          "timestampSec": 14.9,
+          "kind": "navigation",
+          "label": "Navigated to /checkout/review",
+          "value": "/checkout/review"
+        },
+        {
+          "id": "before-click-place-order",
+          "run": "before",
+          "timestampSec": 17.8,
+          "kind": "click",
+          "selector": "[data-testid='place-order-button']",
+          "label": "Clicked Place order"
+        },
+        {
+          "id": "before-button-disabled",
+          "run": "before",
+          "timestampSec": 18.0,
+          "kind": "assertion",
+          "selector": "[data-testid='place-order-button']",
+          "label": "Place order button is disabled during processing",
+          "value": true
+        },
+        {
+          "id": "before-spinner-visible",
+          "run": "before",
+          "timestampSec": 18.4,
+          "kind": "visible",
+          "selector": "[data-testid='payment-loading']",
+          "label": "Processing payment spinner is visible"
+        },
+        {
+          "id": "before-nav-success",
+          "run": "before",
+          "timestampSec": 19.8,
+          "kind": "navigation",
+          "label": "Navigated to /order/success",
+          "value": "/order/success"
+        },
+        {
+          "id": "after-nav-cart",
+          "run": "after",
+          "timestampSec": 2.0,
+          "kind": "navigation",
+          "label": "Navigated to /cart",
+          "value": "/cart"
+        },
+        {
+          "id": "after-nav-checkout",
+          "run": "after",
+          "timestampSec": 6.1,
+          "kind": "navigation",
+          "label": "Navigated to unified /checkout",
+          "value": "/checkout"
+        },
+        {
+          "id": "after-click-pay-now",
+          "run": "after",
+          "timestampSec": 12.9,
+          "kind": "click",
+          "selector": "[data-testid='pay-now-button']",
+          "label": "Clicked Pay now"
+        },
+        {
+          "id": "after-no-spinner-during-wait",
+          "run": "after",
+          "timestampSec": 13.2,
+          "kind": "assertion",
+          "selector": "[data-testid='payment-loading']",
+          "label": "No loading indicator visible during payment wait",
+          "value": true
+        },
+        {
+          "id": "after-button-not-disabled",
+          "run": "after",
+          "timestampSec": 13.3,
+          "kind": "assertion",
+          "selector": "[data-testid='pay-now-button']",
+          "label": "Pay now button stays enabled during payment wait",
+          "value": false
+        },
+        {
+          "id": "after-wait-static",
+          "run": "after",
+          "timestampSec": 13.0,
+          "kind": "wait",
+          "label": "Page is static for ~1.2s after clicking Pay now",
+          "value": 1.2
+        },
+        {
+          "id": "after-nav-success",
+          "run": "after",
+          "timestampSec": 14.3,
+          "kind": "navigation",
+          "label": "Navigated to /order/success",
+          "value": "/order/success"
+        }
+      ]
+    }
+  ]
+}

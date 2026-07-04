@@ -1,0 +1,107 @@
+{
+  "intent": "payment_failure_branch",
+  "confidence": 0.93,
+  "answerText": "In the failure branch, the old version gives the user a clear retry action. The new version sends the user to a generic error page with no recovery path.",
+  "newFlow": {
+    "flowId": "checkout-fail",
+    "flowTitle": "Checkout payment failure branch",
+    "viewport": "desktop",
+    "videoBefore": "placeholder-fail-before.mp4",
+    "videoAfter": "placeholder-fail-after.mp4",
+    "sideBySideVideo": "placeholder-fail-side-by-side.mp4",
+    "voiceoverAudio": null,
+    "durationSec": 20,
+    "narration": [
+      {
+        "id": "fail-narr-intro",
+        "startSec": 0,
+        "endSec": 5,
+        "text": "Here is what happens when the payment fails in both versions.",
+        "severity": "neutral",
+        "changeIds": [],
+        "evidenceIds": ["fail-before-click-pay", "fail-after-click-pay"]
+      },
+      {
+        "id": "fail-narr-recovery-lost",
+        "startSec": 5,
+        "endSec": 15,
+        "text": "In the failure branch, the old version gives the user a clear retry action. The new version sends the user to a generic error page with no recovery path.",
+        "severity": "regression",
+        "changeIds": ["fail-change-recovery-lost"],
+        "evidenceIds": [
+          "fail-before-error-modal",
+          "fail-before-retry-visible",
+          "fail-after-nav-error",
+          "fail-after-no-retry"
+        ]
+      }
+    ],
+    "perceivableChanges": [
+      {
+        "id": "fail-change-recovery-lost",
+        "type": "error-recovery-lost",
+        "description": "The failure branch used to show an error modal with a Retry payment button; it now redirects to a generic /order/error page with no retry action.",
+        "timestampSec": 8,
+        "severity": "regression",
+        "evidenceIds": [
+          "fail-before-error-modal",
+          "fail-before-retry-visible",
+          "fail-after-nav-error",
+          "fail-after-no-retry"
+        ],
+        "confidence": 0.94
+      }
+    ],
+    "evidence": [
+      {
+        "id": "fail-before-click-pay",
+        "run": "before",
+        "timestampSec": 6.5,
+        "kind": "click",
+        "selector": "[data-testid='place-order-button']",
+        "label": "Clicked Place order (payment will fail)"
+      },
+      {
+        "id": "fail-before-error-modal",
+        "run": "before",
+        "timestampSec": 8.1,
+        "kind": "visible",
+        "selector": "[data-testid='payment-error-modal']",
+        "label": "Error modal visible: 'Payment failed. Please try again.'"
+      },
+      {
+        "id": "fail-before-retry-visible",
+        "run": "before",
+        "timestampSec": 8.3,
+        "kind": "visible",
+        "selector": "[data-testid='retry-payment-button']",
+        "label": "Retry payment button is visible"
+      },
+      {
+        "id": "fail-after-click-pay",
+        "run": "after",
+        "timestampSec": 6.2,
+        "kind": "click",
+        "selector": "[data-testid='pay-now-button']",
+        "label": "Clicked Pay now (payment will fail)"
+      },
+      {
+        "id": "fail-after-nav-error",
+        "run": "after",
+        "timestampSec": 7.9,
+        "kind": "navigation",
+        "label": "Navigated to generic /order/error page",
+        "value": "/order/error"
+      },
+      {
+        "id": "fail-after-no-retry",
+        "run": "after",
+        "timestampSec": 8.2,
+        "kind": "assertion",
+        "selector": "[data-testid='retry-payment-button']",
+        "label": "No retry button present on error page",
+        "value": false
+      }
+    ]
+  }
+}
